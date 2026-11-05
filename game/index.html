@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Snake City</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #bfe6f7;
+        font-family: system-ui, -apple-system, "PingFang TC", "Noto Sans TC", sans-serif;
+        color: #2b2d42;
+      }
+      canvas {
+        display: block;
+      }
+      #overlay {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        user-select: none;
+      }
+      .hud-score {
+        position: absolute;
+        left: 16px;
+        top: 14px;
+        text-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
+      }
+      .hud-score-main {
+        font-size: 26px;
+        font-weight: 800;
+      }
+      .hud-score-sub {
+        font-size: 13px;
+        opacity: 0.8;
+        margin-top: 2px;
+      }
+      .hud-hunger {
+        position: absolute;
+        top: 18px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 700;
+      }
+      .hud-hunger[hidden] {
+        display: none;
+      }
+      .hud-hunger-track {
+        width: 220px;
+        height: 12px;
+        border-radius: 6px;
+        background: rgba(43, 45, 66, 0.25);
+        overflow: hidden;
+      }
+      .hud-hunger-fill {
+        height: 100%;
+        background: #45b649;
+        transform-origin: left;
+      }
+      .hud-hunger.low .hud-hunger-fill {
+        background: #f4a261;
+      }
+      .hud-hunger.starving .hud-hunger-fill {
+        background: #e63946;
+        animation: blink 0.5s steps(2) infinite;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0.3;
+        }
+      }
+      .hud-panel {
+        position: absolute;
+        left: 50%;
+        top: 72%;
+        transform: translate(-50%, -50%);
+        max-width: min(420px, calc(100vw - 32px));
+        box-sizing: border-box;
+        padding: 20px 28px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.88);
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+        text-align: center;
+      }
+      .hud-panel[hidden] {
+        display: none;
+      }
+      .hud-panel h1 {
+        margin: 0 0 10px;
+        font-size: 28px;
+      }
+      .hud-panel p {
+        margin: 6px 0;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      .hud-panel .hud-big {
+        font-size: 20px;
+        font-weight: 700;
+      }
+      .hud-panel .hud-best {
+        color: #e63946;
+        font-weight: 800;
+      }
+      .hud-panel .hud-cta {
+        margin-top: 14px;
+        font-weight: 700;
+        color: #2a9d8f;
+      }
+      .hud-hint,
+      .hud-corner {
+        position: absolute;
+        bottom: 12px;
+        font-size: 12px;
+      }
+      .hud-hint {
+        left: 16px;
+        opacity: 0.7;
+      }
+      .hud-corner {
+        right: 16px;
+        text-align: right;
+      }
+      .hud-seed {
+        opacity: 0.7;
+      }
+      .hud-attribution {
+        margin-bottom: 2px;
+        padding: 1px 6px;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.75);
+      }
+      .hud-attribution[hidden] {
+        display: none;
+      }
+      .hud-panel .hud-maps {
+        display: flex;
+        justify-content: center;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .hud-maps span {
+        padding: 4px 10px;
+        border-radius: 8px;
+        border: 2px solid rgba(43, 45, 66, 0.2);
+      }
+      .hud-maps span.chosen {
+        border-color: #2a9d8f;
+        background: rgba(42, 157, 143, 0.12);
+        font-weight: 700;
+      }
+      .hud-hint[hidden],
+      .hud-seed[hidden] {
+        display: none;
+      }
+      .hud-toast {
+        position: absolute;
+        left: 50%;
+        top: 40%;
+        transform: translate(-50%, -50%);
+        padding: 8px 18px;
+        border-radius: 999px;
+        background: rgba(28, 27, 51, 0.8);
+        color: #ffffff;
+        font-size: 16px;
+        font-weight: 700;
+      }
+      .hud-toast[hidden] {
+        display: none;
+      }
+      .minimap {
+        position: absolute;
+        right: 16px;
+        top: 16px;
+        border-radius: 8px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+        border: 2px solid rgba(255, 255, 255, 0.85);
+      }
+      .minimap.enlarged {
+        right: 50%;
+        top: 50%;
+        transform: translate(50%, -50%);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="overlay"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

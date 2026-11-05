@@ -1,0 +1,24 @@
+{
+  "name": "snake-city",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "check:map": "esbuild scripts/check-map.ts --bundle --platform=node --format=esm --log-level=warning --outfile=node_modules/.cache/check-map.mjs && node node_modules/.cache/check-map.mjs",
+    "check:sim": "esbuild scripts/check-sim.ts --bundle --platform=node --format=esm --log-level=warning --outfile=node_modules/.cache/check-sim.mjs && node node_modules/.cache/check-sim.mjs",
+    "build:map": "esbuild scripts/build-map.ts --bundle --platform=node --format=esm --log-level=warning --outfile=node_modules/.cache/build-map.mjs && node node_modules/.cache/build-map.mjs"
+  },
+  "dependencies": {
+    "three": "0.169.0"
+  },
+  "devDependencies": {
+    "@types/three": "0.169.0",
+    "esbuild": "0.25.12",
+    "typescript": "5.6.3",
+    "vite": "6.4.4"
+  }
+}

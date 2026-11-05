@@ -1,0 +1,20 @@
+# Dependencies and build output
+node_modules/
+dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Local environment
+.env
+.env.*
+
+# Editors and OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Raw OpenStreetMap downloads for build:map (only the converted map is committed)
+game/scripts/.osm-cache/
