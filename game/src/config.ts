@@ -32,7 +32,8 @@ export const SNAKE = {
 } as const;
 
 export const PEOPLE = {
-  COUNT: 10,
+  /** People on the street in normal play; eaten ones are replaced from the ring road. */
+  COUNT: 30,
   /** One step every 500 ms = 2 cells per second, independent of the snake's speed. */
   STEP_MS: 500,
   /** People flee when the snake's head is this many steps away or closer. */

@@ -5,15 +5,15 @@ import * as THREE from 'three';
 import { CAMERA, MAP, OCCLUSION, RENDER } from '../config';
 import { Terrain, type Grid } from '../grid';
 import type { CityMap, Lot } from '../map/city';
-import { boxMatrix, groundBox, INSET, lotHeight, onWall, ROOF_HEIGHT, SIDEWALK_HEIGHT, wallCells, type WallCell } from './facades';
+import { addBuilding, type BuildingKit, type WindowSpot } from './buildings';
+import { boxMatrix, groundBox, lotHeight, lotShapes, onWall, ROOF_HEIGHT, SIDEWALK_HEIGHT } from './facades';
 import { LotParts } from './lotParts';
-import { BUILDING_PALETTE, COLORS, TAIWAN_PALETTE } from './palette';
+import { BUILDING_PALETTE, COLORS } from './palette';
+import { Surroundings } from './surroundings';
 import { TaiwanDecor } from './taiwan';
 
 const WINDOW_W = 0.34;
 const WINDOW_H = 0.22;
-/** How far an arcade's ground floor is set back behind the columns. */
-const ARCADE_DEPTH = 0.22;
 
 export class CityView {
   readonly object = new THREE.Group();
@@ -91,50 +91,53 @@ export class CityView {
     this.object.add(sidewalks);
 
     // Buildings. Bodies and roofs have a translucent twin for the see-through effect; details
-    // just disappear.
-    this.decor = city.id === 'east' ? new TaiwanDecor(grid, this.lots) : null;
-    const palette = this.decor ? TAIWAN_PALETTE : BUILDING_PALETTE;
+    // just disappear. Real districts build wall to wall and draw each building by its use.
+    const real = city.id === 'east';
+    const shapes = lotShapes(grid, this.lots, real);
+    this.decor = real ? new TaiwanDecor(this.lots, shapes) : null;
     const white = lambert('#ffffff');
     const ghost = lambert('#ffffff', { transparent: true, opacity: OCCLUSION.OPACITY, depthWrite: false });
-    const bodies = new LotParts(box, white, ghost);
-    const roofs = new LotParts(box, white, ghost);
-    const windows = new LotParts(box, lambert(COLORS.window), null, false);
-    const windowSpots: Array<{ lot: number; wall: WallCell; y: number }> = [];
+    const kit: BuildingKit = {
+      bodies: new LotParts(box, white, ghost),
+      roofs: new LotParts(box, white, ghost),
+      windows: new LotParts(box, lambert(COLORS.window), null, false),
+      glass: new LotParts(box, lambert(COLORS.glass), null, false),
+      trim: new LotParts(box, white, null, false),
+    };
+    const windowSpots: WindowSpot[] = [];
 
     const color = new THREE.Color();
     this.lots.forEach((lot, index) => {
-      const tall = lotHeight(lot);
-      const cx = lot.x + lot.w / 2;
-      const cz = lot.z + lot.d / 2;
-      const w = lot.w - 2 * INSET;
-      const d = lot.d - 2 * INSET;
-      color.set(palette[lot.color]);
-      const arcade = this.decor?.arcade[index] === 1;
-      if (arcade) {
-        // 騎樓: the ground floor sits back; the floors above reach out over the columns.
-        const floor = RENDER.FLOOR_HEIGHT;
-        bodies.add(index, boxMatrix(cx, SIDEWALK_HEIGHT, cz, w - 2 * ARCADE_DEPTH, floor, d - 2 * ARCADE_DEPTH), color);
-        bodies.add(index, boxMatrix(cx, SIDEWALK_HEIGHT + floor, cz, w, tall - floor, d), color);
-      } else {
-        bodies.add(index, boxMatrix(cx, SIDEWALK_HEIGHT, cz, w, tall, d), color);
+      const shape = shapes[index];
+      if (this.decor) {
+        addBuilding(kit, index, lot, shape, this.decor.arcade[index] === 1, windowSpots);
+        return;
       }
-      roofs.add(index, boxMatrix(cx, SIDEWALK_HEIGHT + tall, cz, w + 0.1, ROOF_HEIGHT, d + 0.1), color.clone().multiplyScalar(0.82));
-
-      // One window per wall cell per floor; arcades have none on the ground floor.
-      for (const wall of wallCells(grid, lot)) {
-        for (let floor = arcade ? 1 : 0; floor < lot.floors; floor++) {
+      // Generated cities: a candy box with a roof and one window per wall cell per floor.
+      const tall = lotHeight(lot);
+      const cx = (shape.x0 + shape.x1) / 2;
+      const cz = (shape.z0 + shape.z1) / 2;
+      const w = shape.x1 - shape.x0;
+      const d = shape.z1 - shape.z0;
+      color.set(BUILDING_PALETTE[lot.color]);
+      kit.bodies.add(index, boxMatrix(cx, SIDEWALK_HEIGHT, cz, w, tall, d), color);
+      kit.roofs.add(index, boxMatrix(cx, SIDEWALK_HEIGHT + tall, cz, w + 0.1, ROOF_HEIGHT, d + 0.1), color.clone().multiplyScalar(0.82));
+      for (const wall of shape.walls) {
+        for (let floor = 0; floor < lot.floors; floor++) {
           const y = SIDEWALK_HEIGHT + floor * RENDER.FLOOR_HEIGHT + 0.1;
-          windows.add(index, onWall(wall, 0, y, WINDOW_W, WINDOW_H, 0.05, 0));
-          windowSpots.push({ lot: index, wall, y });
+          kit.windows.add(index, onWall(wall, 0, y, WINDOW_W, WINDOW_H, 0.05, 0));
         }
       }
     });
-    this.parts.push(bodies, roofs, windows);
+    this.parts.push(kit.bodies, kit.roofs, kit.windows, kit.glass, kit.trim);
     for (const part of this.parts) this.object.add(...part.build());
 
     if (this.decor) {
-      this.object.add(...this.decor.build(windowSpots));
+      this.object.add(...this.decor.build(windowSpots, shapes));
       this.parts.push(...this.decor.parts);
+      const surroundings = new Surroundings(width, height);
+      this.disposables.push(surroundings);
+      this.object.add(surroundings.object);
     }
 
     this.setGhosts([]);

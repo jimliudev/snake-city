@@ -67,3 +67,66 @@ export function boxMatrix(x: number, y: number, z: number, w: number, h: number,
 export function groundBox(): THREE.BoxGeometry {
   return new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
 }
+
+/** Gap between two different buildings standing back to back, just enough to avoid flicker. */
+const JOIN_GAP = 0.015;
+
+/** Where a lot's building actually stands, and the walls you can see from the street. */
+export interface LotShape {
+  /** Footprint of the building body. */
+  x0: number;
+  x1: number;
+  z0: number;
+  z1: number;
+  /** Per side (north, east, south, west): true when it faces a street, not another building. */
+  open: [boolean, boolean, boolean, boolean];
+  /** Wall stretches facing streets, on the body's wall plane. */
+  walls: WallCell[];
+}
+
+/**
+ * Shapes for every lot. Generated cities keep a gap around every building and a wall on every
+ * side. Real districts (`joined`) build wall to wall like a Taipei block: sides facing another
+ * building close up, lots of the same building merge, and only street-facing walls get detail.
+ */
+export function lotShapes(grid: Grid, lots: Lot[], joined: boolean): LotShape[] {
+  if (!joined) {
+    return lots.map((lot) => ({
+      x0: lot.x + INSET,
+      x1: lot.x + lot.w - INSET,
+      z0: lot.z + INSET,
+      z1: lot.z + lot.d - INSET,
+      open: [true, true, true, true],
+      walls: wallCells(grid, lot),
+    }));
+  }
+  const groupOf = new Int32Array(grid.cellCount).fill(-1);
+  lots.forEach((lot, index) => {
+    for (let z = lot.z; z < lot.z + lot.d; z++) for (let x = lot.x; x < lot.x + lot.w; x++) groupOf[grid.index(x, z)] = lot.group ?? index;
+  });
+  return lots.map((lot, index) => {
+    const group = lot.group ?? index;
+    /** Inset for one side, given the cells just outside it. */
+    const side = (cells: Array<[number, number]>) => {
+      const open = cells.some(([x, z]) => !grid.inside(x, z) || grid.walkable(grid.index(x, z)));
+      if (open) return { open, inset: INSET };
+      return { open, inset: cells.every(([x, z]) => groupOf[grid.index(x, z)] === group) ? 0 : JOIN_GAP };
+    };
+    const span = (n: number, at: (i: number) => [number, number]) => Array.from({ length: n }, (_, i) => at(i));
+    const north = side(span(lot.w, (i) => [lot.x + i, lot.z - 1]));
+    const east = side(span(lot.d, (i) => [lot.x + lot.w, lot.z + i]));
+    const south = side(span(lot.w, (i) => [lot.x + i, lot.z + lot.d]));
+    const west = side(span(lot.d, (i) => [lot.x - 1, lot.z + i]));
+    const insets: Record<Dir, number> = { 0: north.inset, 1: east.inset, 2: south.inset, 3: west.inset };
+    const walls = wallCells(grid, lot)
+      .filter((wall) => wall.outside !== Terrain.BUILDING && insets[wall.dir] === INSET);
+    return {
+      x0: lot.x + west.inset,
+      x1: lot.x + lot.w - east.inset,
+      z0: lot.z + north.inset,
+      z1: lot.z + lot.d - south.inset,
+      open: [north.open, east.open, south.open, west.open],
+      walls,
+    };
+  });
+}

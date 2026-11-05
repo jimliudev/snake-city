@@ -103,10 +103,7 @@ export class Hud {
         <h1>Snake City</h1>
         <p>在城市街道上獵食路人。越吃越長、越長越快。</p>
         <p>撞到建築物、咬到自己，或太久沒吃而餓死，遊戲就結束。</p>
-        <p class="hud-maps">${(['random', 'east'] as const)
-          .map((map, index) => `<span class="${map === state.map ? 'chosen' : ''}">${index + 1} ${MAP_NAMES[map]}</span>`)
-          .join('')}</p>
-        <p class="hud-cta">按 1 / 2 選地圖，按方向鍵開始</p>`;
+        <p class="hud-cta">${MAP_NAMES[state.map]} · 按方向鍵開始</p>`;
     } else if (state.screen === 'dead' && state.cause) {
       this.panel.hidden = false;
       this.panel.innerHTML = `

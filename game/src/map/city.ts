@@ -17,10 +17,28 @@ export interface Strip extends Rect {
   axis: 'x' | 'z';
 }
 
+/** What a building is used for, from OpenStreetMap; it picks the building's look (spec §14.4). */
+export const BuildingKind = {
+  APARTMENT: 0,
+  OFFICE: 1,
+  MALL: 2,
+  SCHOOL: 3,
+  HOSPITAL: 4,
+  PUBLIC: 5,
+} as const;
+export type BuildingKind = (typeof BuildingKind)[keyof typeof BuildingKind];
+
 export interface Lot extends Rect {
   floors: number;
   /** Index into the building palette. */
   color: number;
+  /** Real districts only; generated cities leave it out and every building looks alike. */
+  kind?: BuildingKind;
+  /**
+   * Lots with the same group are parts of one real building and are drawn joined, with no gap
+   * or inside walls between them. Generated cities leave it out: every lot stands alone.
+   */
+  group?: number;
 }
 
 export interface CityMap {

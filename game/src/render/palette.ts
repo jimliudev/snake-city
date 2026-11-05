@@ -28,7 +28,32 @@ export const COLORS = {
   tinWhiteDark: '#c4ccd2',
   tankWhite: '#f6f6f2',
   tankSteel: '#b5bdc4',
+  glass: '#3f5b6e',
+  spandrel: '#e8ecee',
+  ledge: '#ece6da',
+  machineRoom: '#c9c6bf',
+  billboard: '#f4f1ea',
+  schoolRoof: '#b5523b',
+  trunk: '#7a5a3c',
+  lawn: '#7fc88f',
+  curb: '#d8d2c6',
 } as const;
+
+/** Street-tree leaves: camphor and maple greens (spec §14.4). */
+export const LEAF_PALETTE = ['#4f9d5a', '#5fae5f', '#3f8f52', '#6dbb68'] as const;
+
+/** Office tower glass, bluish and a little brighter than life. Same length as TAIWAN_PALETTE. */
+export const GLASS_PALETTE = ['#6f97ad', '#8aaebf', '#5b8299', '#7d9fa8', '#9bb7c2', '#6a8a9c', '#88a3b5', '#a5bcc7'] as const;
+
+/** Office podiums: granite and stone cladding. Same length as TAIWAN_PALETTE. */
+export const STONE_PALETTE = ['#d9d3c7', '#c8c2b6', '#b9b3a8', '#e4dfd4', '#cbbfae', '#a8a39b', '#d6cbbb', '#bfc3c4'] as const;
+
+/** Department stores: pale, nearly windowless walls, with a coloured band. */
+export const MALL_PALETTE = ['#efe9df', '#e3ddd2', '#f2ece6', '#e8e4e0'] as const;
+export const MALL_ACCENTS = ['#c8423b', '#d9822b', '#2f5d8a', '#7a4a8c'] as const;
+
+/** Schools, hospitals and public buildings. */
+export const INSTITUTION_PALETTE = ['#f1ece0', '#e9e2cf', '#eef0ec', '#e6dcc4'] as const;
 
 /** Building colours, picked by Lot.color. Length matches BUILDING_COLORS. */
 export const BUILDING_PALETTE = [

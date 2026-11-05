@@ -1,21 +1,40 @@
-// Vertical shop signs with generic words, never real shop names or brands (spec §14.5).
-// Every word is drawn once into a shared atlas texture.
+// Vertical shop signs with made-up shop names and generic trade words, never real shop names
+// or brands (spec §14.5). Every word is drawn once into a shared atlas texture.
 
 import * as THREE from 'three';
 
 export const SIGN_WORDS = [
-  '麵', '茶', '冰', '藥局', '牙醫', '診所', '當舖', '便當', '鹽酥雞', '補習班',
-  '眼鏡', '水電', '鎖', '早餐', '咖啡', '手機', '美髮', '洗衣', '五金', '檳榔',
-  '銀樓', '旅社', '刻印', '豆花', '滷味', '燒臘', '按摩', '書局', '花店', '茶行',
+  // Generic trade words.
+  '麵', '茶', '冰', '藥局', '牙醫', '診所', '當舖', '便當', '眼鏡', '水電',
+  '鎖', '早餐', '咖啡', '手機', '美髮', '洗衣', '五金', '檳榔', '旅社', '刻印',
+  // Made-up shop names, 3–4 characters: a name or lucky word, then the trade. Some are puns on
+  // the game, so they cannot be real.
+  '阿旺麵', '老蔡茶行', '小美冰', '順興五金', '金滿銀樓', '嘉福旅社', '阿雄便當', '蛇城牙醫',
+  '貪吃滷味', '長長豆花', '鱗光眼鏡', '嘶嘶咖啡', '福記燒臘', '好運鎖', '青蛇美髮', '阿嬤早餐',
+  '明亮洗衣', '吞吞雞排', '金榜補習', '安心診所', '德生藥局', '永春刻印', '一品花店', '大吉手機',
+  '和平水電', '舒活按摩', '文昌書局', '寶山當舖', '阿珠麵線', '珍好茶', '滿福水餃', '旺來鳳梨',
 ] as const;
 
 /** Sign backgrounds; the text is dark (spec §14.3: the brightest things in the street). */
 export const SIGN_COLORS = ['#ff4d4d', '#ffd23f', '#3ddc84', '#4da3ff', '#ff9f1c', '#ffffff', '#ff6fb5'] as const;
 
 const COLUMN = 64;
-const ATLAS_W = 2048;
-const ATLAS_H = 256;
 const PAD = 8;
+/** Longest word, in characters. */
+const MAX_CHARS = 4;
+/** Height of one atlas slot: a word written top to bottom. */
+const SLOT = MAX_CHARS * COLUMN + 2 * PAD;
+const ATLAS_W = 2048;
+const PER_ROW = ATLAS_W / COLUMN;
+const ATLAS_H = 1024;
+
+/** Top-left corner of a word's slot in the atlas, in pixels. */
+const slotOf = (index: number) => ({ left: (index % PER_ROW) * COLUMN, top: Math.floor(index / PER_ROW) * SLOT });
+
+for (const word of SIGN_WORDS) {
+  if ([...word].length > MAX_CHARS) throw new Error(`Sign word '${word}' is longer than ${MAX_CHARS} characters.`);
+}
+if (Math.ceil(SIGN_WORDS.length / PER_ROW) * SLOT > ATLAS_H) throw new Error('Too many sign words for the atlas.');
 
 /** Sign size in world units: one character is SIGN_CHAR tall. */
 export const SIGN_CHAR = 0.32;
@@ -33,9 +52,10 @@ function drawAtlas(): THREE.CanvasTexture {
   context.font = `bold ${COLUMN - 12}px "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif`;
   context.textAlign = 'center';
   context.textBaseline = 'middle';
-  SIGN_WORDS.forEach((word, column) => {
+  SIGN_WORDS.forEach((word, index) => {
+    const { left, top } = slotOf(index);
     [...word].forEach((char, row) => {
-      context.fillText(char, column * COLUMN + COLUMN / 2, PAD + row * COLUMN + COLUMN / 2);
+      context.fillText(char, left + COLUMN / 2, top + PAD + row * COLUMN + COLUMN / 2);
     });
   });
   const texture = new THREE.CanvasTexture(canvas);
@@ -50,6 +70,8 @@ export interface SignKit {
   /** Text on the two broad faces, plain colour elsewhere; tinted by instance colour. */
   materials: THREE.Material[];
   heights: number[];
+  /** Indices of the words no taller than `height`; never empty. */
+  fitting(height: number): number[];
   dispose(): void;
 }
 
@@ -58,17 +80,18 @@ export function makeSignKit(): SignKit {
   const lettered = new THREE.MeshLambertMaterial({ map: texture });
   const plain = new THREE.MeshLambertMaterial({ color: '#ffffff' });
   const heights: number[] = [];
-  const geometries = SIGN_WORDS.map((word, column) => {
+  const geometries = SIGN_WORDS.map((word, index) => {
     const chars = [...word].length;
     const height = chars * SIGN_CHAR + 0.08;
     heights.push(height);
     const geometry = new THREE.BoxGeometry(SIGN_THICKNESS, height, SIGN_DEPTH).translate(0, height / 2, 0);
     // Faces 0 and 1 (±x) are the broad ones; point their UVs at this word's column.
     const uv = geometry.getAttribute('uv') as THREE.BufferAttribute;
-    const u0 = (column * COLUMN) / ATLAS_W;
-    const u1 = ((column + 1) * COLUMN) / ATLAS_W;
-    const v1 = 1;
-    const v0 = 1 - (chars * COLUMN + 2 * PAD) / ATLAS_H;
+    const { left, top } = slotOf(index);
+    const u0 = left / ATLAS_W;
+    const u1 = (left + COLUMN) / ATLAS_W;
+    const v1 = 1 - top / ATLAS_H;
+    const v0 = 1 - (top + chars * COLUMN + 2 * PAD) / ATLAS_H;
     for (let i = 0; i < 8; i++) {
       uv.setXY(i, u0 + uv.getX(i) * (u1 - u0), v0 + uv.getY(i) * (v1 - v0));
     }
@@ -80,6 +103,10 @@ export function makeSignKit(): SignKit {
     geometries,
     materials,
     heights,
+    fitting(height) {
+      const fit = heights.flatMap((h, index) => (h <= height ? [index] : []));
+      return fit.length > 0 ? fit : [heights.indexOf(Math.min(...heights))];
+    },
     dispose() {
       texture.dispose();
       lettered.dispose();

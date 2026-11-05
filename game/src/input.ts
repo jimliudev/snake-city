@@ -1,5 +1,4 @@
 import type { Dir } from './grid';
-import type { MapId } from './map/city';
 
 /**
  * Everything the player can ask for. Keys produce these today; touch controls only need to
@@ -9,8 +8,7 @@ export type Action =
   | { type: 'turn'; dir: Dir }
   | { type: 'confirm' }
   | { type: 'minimap' }
-  | { type: 'record' }
-  | { type: 'choose'; map: MapId };
+  | { type: 'record' };
 
 const KEY_ACTIONS: Record<string, Action> = {
   ArrowUp: { type: 'turn', dir: 0 },
@@ -26,10 +24,6 @@ const KEY_ACTIONS: Record<string, Action> = {
   NumpadEnter: { type: 'confirm' },
   KeyM: { type: 'minimap' },
   KeyR: { type: 'record' },
-  Digit1: { type: 'choose', map: 'random' },
-  Numpad1: { type: 'choose', map: 'random' },
-  Digit2: { type: 'choose', map: 'east' },
-  Numpad2: { type: 'choose', map: 'east' },
 };
 
 /** Report key presses as actions. Auto-repeat is ignored. */

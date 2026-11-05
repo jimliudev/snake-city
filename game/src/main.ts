@@ -6,7 +6,8 @@ const params = new URLSearchParams(window.location.search);
 const seedParam = params.get('seed');
 const seed = seedParam !== null && Number.isFinite(Number(seedParam)) ? Number(seedParam) >>> 0 : null;
 const debug = params.has('debug');
-const map = params.get('map') === 'east' ? 'east' : 'random';
+// Only 台北東區 is offered; `?map=random` still opens the generated city, for testing.
+const map = params.get('map') === 'random' ? 'random' : 'east';
 const recording = params.has('record');
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });

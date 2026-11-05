@@ -6,18 +6,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { MAP, SNAKE } from '../src/config';
 import { DIRS, Grid, ROAD_RANK, Terrain } from '../src/grid';
-import { BUILDING_COLORS } from '../src/map/city';
+import { BUILDING_COLORS, BuildingKind } from '../src/map/city';
 import type { DistrictData } from '../src/map/east';
 import { Rng } from '../src/rng';
 
 // npm runs scripts from the package root.
 const ROOT = process.cwd();
 const CACHE = path.join(ROOT, 'scripts/.osm-cache/east-raw.json');
+const BUILDING_CACHE = path.join(ROOT, 'scripts/.osm-cache/east-buildings-raw.json');
 const OUT = path.join(ROOT, 'src/map/east.json');
 
 /** South, west, north, east. A little larger than the district so the boundary roads are whole. */
 const BBOX = [25.035, 121.546, 25.044, 121.56] as const;
 const QUERY = `[out:json][timeout:60];way["highway"](${BBOX.join(',')});out geom tags;`;
+const BUILDING_QUERY = `[out:json][timeout:90];way["building"](${BBOX.join(',')});out geom tags;`;
 const OVERPASS = 'https://overpass-api.de/api/interpreter';
 
 const CELL_METRES = 10;
@@ -53,9 +55,46 @@ const RANK_BY_NAME: Record<string, number> = {};
 const CELLS_BY_RANK: Record<number, number> = { 3: MAP.ROAD_WIDTH, 2: MAP.STREET_WIDTH, 1: MAP.ALLEY_WIDTH };
 const RING = MAP.ROAD_WIDTH;
 
-/** Floors by the most major road a lot touches (spec §13.5). Lots touching no road count as alley lots. */
+/**
+ * Floors by the most major road a lot touches (spec §13.5), for buildings OSM gives no height.
+ * Lots touching no road count as alley lots.
+ */
 const FLOORS_BY_RANK: Record<number, [number, number]> = { 3: [8, 12], 2: [5, 8], 1: [4, 5], 0: [4, 5] };
+/** Real floor counts are kept, within these limits (a few towers are over 20 floors). */
+const MIN_FLOORS = 2;
+const MAX_FLOORS = 20;
+/** For buildings tagged with a height but no floor count. */
+const METRES_PER_FLOOR = 3.3;
+/** Real buildings may make bigger lots than generated ones; they are drawn joined anyway. */
+const REAL_LOT_MAX = 8;
 const BUILDING_SEED = 2026;
+
+/** OSM `building=*` → kind (spec §14.4). Anything not listed is an apartment block. */
+const KIND_BY_CLASS: Record<string, BuildingKind> = {
+  commercial: BuildingKind.OFFICE,
+  office: BuildingKind.OFFICE,
+  hotel: BuildingKind.OFFICE,
+  retail: BuildingKind.MALL,
+  department_store: BuildingKind.MALL,
+  supermarket: BuildingKind.MALL,
+  school: BuildingKind.SCHOOL,
+  university: BuildingKind.SCHOOL,
+  college: BuildingKind.SCHOOL,
+  kindergarten: BuildingKind.SCHOOL,
+  hospital: BuildingKind.HOSPITAL,
+  public: BuildingKind.PUBLIC,
+  government: BuildingKind.PUBLIC,
+  civic: BuildingKind.PUBLIC,
+};
+/** Names that give the use away when the class does not, e.g. `building=yes` 百貨. Only for the kind; names are never shown. */
+const KIND_BY_NAME: Array<[RegExp, BuildingKind]> = [
+  [/百貨|購物|商場/, BuildingKind.MALL],
+  [/商業|銀行|金融|金控|企業|貿易|飯店|酒店|辦公/, BuildingKind.OFFICE],
+  [/醫院/, BuildingKind.HOSPITAL],
+  [/國小|國中|高中|學校|幼兒園/, BuildingKind.SCHOOL],
+];
+/** `building=*` values that are not buildings you could walk into from the street. */
+const SKIPPED_BUILDINGS = new Set(['roof', 'construction', 'ruins', 'carport']);
 
 interface OsmWay {
   type: 'way';
@@ -67,20 +106,20 @@ interface OsmWay {
 // ---------------------------------------------------------------------------------------------
 // Download
 
-async function download(): Promise<OsmWay[]> {
-  if (!fs.existsSync(CACHE)) {
+async function download(cache: string, query: string): Promise<OsmWay[]> {
+  if (!fs.existsSync(cache)) {
     let wait = 5;
     for (let attempt = 1; ; attempt++) {
-      console.log(`downloading from Overpass (attempt ${attempt})…`);
+      console.log(`downloading ${path.basename(cache)} from Overpass (attempt ${attempt})…`);
       const response = await fetch(OVERPASS, {
         method: 'POST',
         headers: { 'User-Agent': 'snake-city-build-map/0.1', 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ data: QUERY }),
+        body: new URLSearchParams({ data: query }),
       });
       const text = await response.text();
       if (response.ok && text.trimStart().startsWith('{')) {
-        fs.mkdirSync(path.dirname(CACHE), { recursive: true });
-        fs.writeFileSync(CACHE, text);
+        fs.mkdirSync(path.dirname(cache), { recursive: true });
+        fs.writeFileSync(cache, text);
         break;
       }
       if (attempt >= 6) throw new Error(`Overpass failed: HTTP ${response.status}: ${text.slice(0, 200)}`);
@@ -89,8 +128,8 @@ async function download(): Promise<OsmWay[]> {
       wait *= 2;
     }
   }
-  const data = JSON.parse(fs.readFileSync(CACHE, 'utf8')) as { elements?: unknown[] };
-  if (!Array.isArray(data.elements)) throw new Error(`${CACHE} is not an Overpass response; delete it and retry.`);
+  const data = JSON.parse(fs.readFileSync(cache, 'utf8')) as { elements?: unknown[] };
+  if (!Array.isArray(data.elements)) throw new Error(`${cache} is not an Overpass response; delete it and retry.`);
   return data.elements.filter((element): element is OsmWay => {
     const way = element as OsmWay;
     return way.type === 'way' && Array.isArray(way.geometry) && way.geometry.length >= 2;
@@ -277,45 +316,138 @@ function keepConnected(grid: Grid): number {
 // ---------------------------------------------------------------------------------------------
 // Buildings (spec §13.5)
 
-function buildLots(grid: Grid): DistrictData['lots'] {
+/** A real building from OSM, outlined in cell coordinates. */
+interface RealBuilding {
+  outline: Point[];
+  area: number;
+  /** Floors from `building:levels` or `height`; 0 when OSM does not say. */
+  floors: number;
+  kind: BuildingKind;
+}
+
+function realBuilding(way: OsmWay, toCell: (lat: number, lon: number) => Point): RealBuilding | null {
+  const tags = way.tags ?? {};
+  if (SKIPPED_BUILDINGS.has(tags.building ?? '') || tags.location === 'underground') return null;
+  const outline = way.geometry!.map((p) => toCell(p.lat, p.lon));
+  let area = 0;
+  for (let i = 0; i < outline.length; i++) {
+    const a = outline[i];
+    const b = outline[(i + 1) % outline.length];
+    area += a.x * b.z - b.x * a.z;
+  }
+  area = Math.abs(area) / 2;
+  if (area <= 0) return null;
+  const levels = Number.parseFloat(tags['building:levels'] ?? '');
+  const metres = Number.parseFloat(tags.height ?? '');
+  const floors = levels > 0 ? Math.round(levels) : metres > 0 ? Math.round(metres / METRES_PER_FLOOR) : 0;
+  let kind = KIND_BY_CLASS[tags.building ?? ''] ?? BuildingKind.APARTMENT;
+  if (kind === BuildingKind.APARTMENT && tags.building !== 'apartments' && tags.building !== 'residential') {
+    kind = KIND_BY_NAME.find(([pattern]) => pattern.test(tags.name ?? ''))?.[1] ?? kind;
+  }
+  return { outline, area, floors, kind };
+}
+
+/** Even–odd point-in-polygon test. */
+function inside(p: Point, outline: Point[]): boolean {
+  let hit = false;
+  for (let i = 0, j = outline.length - 1; i < outline.length; j = i++) {
+    const a = outline[i];
+    const b = outline[j];
+    if (a.z > p.z !== b.z > p.z && p.x < ((b.x - a.x) * (p.z - a.z)) / (b.z - a.z) + a.x) hit = !hit;
+  }
+  return hit;
+}
+
+/** For every building cell, the smallest real building over its centre, or −1. */
+function buildingOfCells(grid: Grid, buildings: RealBuilding[]): Int32Array {
+  const owner = new Int32Array(grid.cellCount).fill(-1);
+  buildings.forEach((building, index) => {
+    const xs = building.outline.map((p) => p.x);
+    const zs = building.outline.map((p) => p.z);
+    for (let z = Math.max(0, Math.floor(Math.min(...zs))); z <= Math.min(grid.height - 1, Math.floor(Math.max(...zs))); z++) {
+      for (let x = Math.max(0, Math.floor(Math.min(...xs))); x <= Math.min(grid.width - 1, Math.floor(Math.max(...xs))); x++) {
+        const cell = grid.index(x, z);
+        if (grid.walkable(cell) || !inside({ x: x + 0.5, z: z + 0.5 }, building.outline)) continue;
+        if (owner[cell] < 0 || buildings[owner[cell]].area > building.area) owner[cell] = index;
+      }
+    }
+  });
+  return owner;
+}
+
+/**
+ * Cut the building cells into rectangular lots, each inside one real building (or inside none).
+ * Lots of the same real building share a group, floors, kind and colour.
+ */
+function buildLots(grid: Grid, buildings: RealBuilding[]): { lots: DistrictData['lots']; realCells: number; realFloors: number } {
   const rng = new Rng(BUILDING_SEED);
+  const owner = buildingOfCells(grid, buildings);
   const taken = new Uint8Array(grid.cellCount);
-  const isFreeBuilding = (x: number, z: number) =>
-    grid.inside(x, z) && !grid.walkable(grid.index(x, z)) && !taken[grid.index(x, z)];
-  const lots: DistrictData['lots'] = [];
+  const rects: Array<{ x: number; z: number; w: number; d: number; owner: number }> = [];
   for (let z = 0; z < grid.height; z++) {
     for (let x = 0; x < grid.width; x++) {
-      if (!isFreeBuilding(x, z)) continue;
+      const start = grid.inside(x, z) ? owner[grid.index(x, z)] : -1;
+      const isFree = (fx: number, fz: number) =>
+        grid.inside(fx, fz) && !grid.walkable(grid.index(fx, fz)) && !taken[grid.index(fx, fz)] && owner[grid.index(fx, fz)] === start;
+      if (!isFree(x, z)) continue;
       // Grow a rectangle right, then down, up to the lot size limit.
-      const limitW = rng.int(2, MAP.LOT_MAX);
-      const limitD = rng.int(2, MAP.LOT_MAX);
+      const max = start >= 0 ? REAL_LOT_MAX : MAP.LOT_MAX;
+      const limitW = start >= 0 ? max : rng.int(2, max);
+      const limitD = start >= 0 ? max : rng.int(2, max);
       let w = 1;
-      while (w < limitW && isFreeBuilding(x + w, z)) w++;
+      while (w < limitW && isFree(x + w, z)) w++;
       let d = 1;
-      while (d < limitD && Array.from({ length: w }, (_, i) => isFreeBuilding(x + i, z + d)).every(Boolean)) d++;
+      while (d < limitD && Array.from({ length: w }, (_, i) => isFree(x + i, z + d)).every(Boolean)) d++;
       for (let j = 0; j < d; j++) for (let i = 0; i < w; i++) taken[grid.index(x + i, z + j)] = 1;
-
-      // The most major road along the lot's edge sets its height.
-      let widest = 0;
-      for (let j = -1; j <= d; j++) {
-        for (let i = -1; i <= w; i++) {
-          const edge = i === -1 || i === w || j === -1 || j === d;
-          const corner = (i === -1 || i === w) && (j === -1 || j === d);
-          if (!edge || corner || !grid.inside(x + i, z + j)) continue;
-          widest = Math.max(widest, ROAD_RANK[grid.terrain[grid.index(x + i, z + j)] as Terrain]);
-        }
-      }
-      const [low, high] = FLOORS_BY_RANK[widest];
-      lots.push([x, z, w, d, rng.int(low, high), rng.int(0, BUILDING_COLORS - 1)]);
+      rects.push({ x, z, w, d, owner: start });
     }
   }
-  return lots;
+
+  /** The most major road along a rectangle's edge. */
+  const widestRoad = (r: { x: number; z: number; w: number; d: number }) => {
+    let widest = 0;
+    for (let j = -1; j <= r.d; j++) {
+      for (let i = -1; i <= r.w; i++) {
+        const edge = i === -1 || i === r.w || j === -1 || j === r.d;
+        const corner = (i === -1 || i === r.w) && (j === -1 || j === r.d);
+        if (!edge || corner || !grid.inside(r.x + i, r.z + j)) continue;
+        widest = Math.max(widest, ROAD_RANK[grid.terrain[grid.index(r.x + i, r.z + j)] as Terrain]);
+      }
+    }
+    return widest;
+  };
+
+  // One look per real building: its parts are joined, so they must match.
+  const looks = new Map<number, { floors: number; color: number; kind: BuildingKind; group: number }>();
+  let realCells = 0;
+  let realFloors = 0;
+  const lots: DistrictData['lots'] = rects.map((rect, index) => {
+    let look = rect.owner >= 0 ? looks.get(rect.owner) : undefined;
+    if (!look) {
+      const building = rect.owner >= 0 ? buildings[rect.owner] : null;
+      const widest = Math.max(...rects.filter((r) => r === rect || (rect.owner >= 0 && r.owner === rect.owner)).map(widestRoad));
+      const [low, high] = FLOORS_BY_RANK[widest];
+      const guess = rng.int(low, high);
+      const floors = building?.floors ? Math.min(MAX_FLOORS, Math.max(MIN_FLOORS, building.floors)) : guess;
+      // Unknown buildings on the main roads are mostly offices.
+      const kind = building?.kind ?? (widest === 3 ? BuildingKind.OFFICE : BuildingKind.APARTMENT);
+      look = { floors, color: rng.int(0, BUILDING_COLORS - 1), kind, group: index };
+      if (rect.owner >= 0) looks.set(rect.owner, look);
+    }
+    if (rect.owner >= 0) {
+      realCells += rect.w * rect.d;
+      if (buildings[rect.owner].floors) realFloors += rect.w * rect.d;
+    }
+    return [rect.x, rect.z, rect.w, rect.d, look.floors, look.color, look.kind, look.group];
+  });
+  return { lots, realCells, realFloors };
 }
 
 // ---------------------------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  const ways = await download();
+  const ways = await download(CACHE, QUERY);
+  const buildingWays = await download(BUILDING_CACHE, BUILDING_QUERY);
   const named = (name: string) => ways.filter((way) => way.tags?.name === name);
   const boundaryPoints = (name: string) =>
     named(name)
@@ -396,7 +528,10 @@ async function main(): Promise<void> {
   for (const edge of kept) drawSegment(grid, edge.from, edge.to, edge.rank);
   const deadEndCells = pruneDeadEnds(grid);
   const cutOffCells = keepConnected(grid);
-  const lots = buildLots(grid);
+  const buildings = buildingWays
+    .map((way) => realBuilding(way, (lat, lon) => toCell(rotate(project(lat, lon), angle))))
+    .filter((building): building is RealBuilding => building !== null);
+  const { lots, realCells, realFloors } = buildLots(grid, buildings);
 
   const rows: string[] = [];
   const CHAR: Record<Terrain, string> = { 0: '#', 1: 'R', 2: 'A', 3: 'S' };
@@ -458,6 +593,11 @@ async function main(): Promise<void> {
   console.log(`road graph: ${edges.length} segments, ${kept.length} kept after dead-end pruning`);
   console.log(`grid pruning: ${deadEndCells} dead-end cells filled, ${cutOffCells} cut-off cells filled`);
   console.log(`alley cells with no building around them (open patches): ${openPatches}`);
+  const kindNames = ['apartment', 'office', 'mall', 'school', 'hospital', 'public'];
+  const kindCells = new Map<string, number>();
+  for (const lot of lots) kindCells.set(kindNames[lot[6]], (kindCells.get(kindNames[lot[6]]) ?? 0) + lot[2] * lot[3]);
+  console.log(`real buildings: ${buildings.length} from OSM; ${realCells} of ${counts['#']} building cells under one, ${realFloors} with a real floor count`);
+  console.log(`building cells by kind: ${[...kindCells].map(([kind, cells]) => `${kind} ${cells}`).join(', ')}`);
   console.log('\nroads (name: width, segments kept / inside):');
   for (const [name, entry] of [...byName].sort((a, b) => b[1].rank - a[1].rank || a[0].localeCompare(b[0]))) {
     console.log(`  ${name}: ${CELLS_BY_RANK[entry.rank]} cells, ${entry.keptEdges} / ${entry.edges}`);

@@ -147,14 +147,6 @@ export class Game {
         this.applyRecording();
         this.hud.toast(this.recording ? '錄影模式 開' : '錄影模式 關');
         break;
-      case 'choose':
-        // Only before the first move; afterwards the keys do nothing.
-        if (this.sim.state === 'ready' && action.map !== this.mapId) {
-          this.mapId = action.map;
-          this.highScore = loadHighScore(action.map);
-          this.newGame();
-        }
-        break;
     }
   }
 
